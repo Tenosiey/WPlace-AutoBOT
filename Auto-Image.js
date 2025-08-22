@@ -1114,33 +1114,32 @@
 
       let finalBlob = blobData;
 
-      if (this.isEnabled && this.chunkedTiles.size > 0) {
-        const tileMatch = endpoint.match(/(\d+)\/(\d+)\.png/);
-        if (tileMatch) {
-          const tileX = parseInt(tileMatch[1], 10);
-          const tileY = parseInt(tileMatch[2], 10);
-          const tileKey = `${tileX},${tileY}`;
+      const tileMatch = endpoint.match(/(\d+)\/(\d+)\.png/);
+      if (tileMatch) {
+        const tileX = parseInt(tileMatch[1], 10);
+        const tileY = parseInt(tileMatch[2], 10);
+        const tileKey = `${tileX},${tileY}`;
+        try {
+          const originalTileBitmap = await createImageBitmap(blobData);
+          const canvas = new OffscreenCanvas(originalTileBitmap.width, originalTileBitmap.height);
+          const ctx = canvas.getContext('2d');
+          ctx.imageSmoothingEnabled = false;
 
-          const chunkBitmap = this.chunkedTiles.get(tileKey);
-          if (chunkBitmap) {
-            try {
-              const originalTileBitmap = await createImageBitmap(blobData);
-              const canvas = new OffscreenCanvas(originalTileBitmap.width, originalTileBitmap.height);
-              const ctx = canvas.getContext('2d');
-              ctx.imageSmoothingEnabled = false;
+          // Draw original tile first and store its data
+          ctx.drawImage(originalTileBitmap, 0, 0);
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          boardState.updateTile(tileX, tileY, imgData);
 
-              // Draw original tile first
-              ctx.drawImage(originalTileBitmap, 0, 0);
-
-              // Set opacity and draw our solid overlay chunk on top
+          if (this.isEnabled) {
+            const chunkBitmap = this.chunkedTiles.get(tileKey);
+            if (chunkBitmap) {
               ctx.globalAlpha = state.overlayOpacity;
               ctx.drawImage(chunkBitmap, 0, 0);
-
               finalBlob = await canvas.convertToBlob({ type: 'image/png' });
-            } catch (e) {
-              console.error("Error compositing overlay:", e);
             }
           }
+        } catch (e) {
+          console.error("Error processing tile:", e);
         }
       }
 
@@ -1152,6 +1151,47 @@
       }, '*');
     }
   }
+
+  const COLOR_ID_TO_RGB = Object.fromEntries(
+    Object.values(CONFIG.COLOR_MAP)
+      .filter(c => c.rgb)
+      .map(c => [c.id, [c.rgb.r, c.rgb.g, c.rgb.b]])
+  );
+
+  const boardState = {
+    tileSize: 1000,
+    tiles: new Map(),
+    updateTile(tileX, tileY, imageData) {
+      this.tiles.set(`${tileX},${tileY}`, imageData);
+    },
+    getColor(absX, absY) {
+      const tileX = Math.floor(absX / this.tileSize);
+      const tileY = Math.floor(absY / this.tileSize);
+      const tile = this.tiles.get(`${tileX},${tileY}`);
+      if (!tile) return null;
+      const localX = absX % this.tileSize;
+      const localY = absY % this.tileSize;
+      const idx = (localY * this.tileSize + localX) * 4;
+      const d = tile.data;
+      return [d[idx], d[idx + 1], d[idx + 2]];
+    },
+    setPixelColor(absX, absY, colorId) {
+      const tileX = Math.floor(absX / this.tileSize);
+      const tileY = Math.floor(absY / this.tileSize);
+      const key = `${tileX},${tileY}`;
+      const tile = this.tiles.get(key);
+      const rgb = COLOR_ID_TO_RGB[colorId];
+      if (!tile || !rgb) return;
+      const localX = absX % this.tileSize;
+      const localY = absY % this.tileSize;
+      const idx = (localY * this.tileSize + localX) * 4;
+      const d = tile.data;
+      d[idx] = rgb[0];
+      d[idx + 1] = rgb[1];
+      d[idx + 2] = rgb[2];
+      d[idx + 3] = 255;
+    }
+  };
 
   const overlayManager = new OverlayManager();
 
@@ -5602,6 +5642,15 @@
           let absX = startX + x;
           let absY = startY + y;
 
+          const boardColor = boardState.getColor(absX, absY);
+          if (boardColor) {
+            const boardColorId = findClosestColor(boardColor, state.availableColors);
+            if (boardColorId === colorId) {
+              skippedPixels.alreadyPainted++;
+              continue;
+            }
+          }
+
           let adderX = Math.floor(absX / 1000);
           let adderY = Math.floor(absY / 1000);
           let pixelX = absX % 1000;
@@ -5630,7 +5679,12 @@
                 }
               }
               if (success) {
-                pixelBatch.pixels.forEach((p) => { state.paintedPixels++; });
+                pixelBatch.pixels.forEach((p) => {
+                  state.paintedPixels++;
+                  const absXP = pixelBatch.regionX * 1000 + p.x;
+                  const absYP = pixelBatch.regionY * 1000 + p.y;
+                  boardState.setPixelColor(absXP, absYP, p.color);
+                });
                 state.currentCharges -= pixelBatch.pixels.length;
                 updateUI("paintingProgress", "default", {
                   painted: state.paintedPixels,
@@ -5693,6 +5747,9 @@
             if (success) {
               pixelBatch.pixels.forEach((pixel) => {
                 state.paintedPixels++;
+                const absXP = pixelBatch.regionX * 1000 + pixel.x;
+                const absYP = pixelBatch.regionY * 1000 + pixel.y;
+                boardState.setPixelColor(absXP, absYP, pixel.color);
               })
 
               state.currentCharges -= pixelBatch.pixels.length;
@@ -5749,6 +5806,9 @@
         if (success) {
           pixelBatch.pixels.forEach((pixel) => {
             state.paintedPixels++
+            const absXP = pixelBatch.regionX * 1000 + pixel.x;
+            const absYP = pixelBatch.regionY * 1000 + pixel.y;
+            boardState.setPixelColor(absXP, absYP, pixel.color);
           })
           state.currentCharges -= pixelBatch.pixels.length;
           if (CONFIG.PAINTING_SPEED_ENABLED && state.paintingSpeed > 0 && pixelBatch.pixels.length > 0) {
