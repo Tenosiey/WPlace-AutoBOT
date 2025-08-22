@@ -4,6 +4,7 @@
     COOLDOWN_DEFAULT: 31000,
     TRANSPARENCY_THRESHOLD: 100,
     WHITE_THRESHOLD: 250,
+    PROGRESS_COLOR_TOLERANCE: 30,
     LOG_INTERVAL: 10,
     PAINTING_SPEED: {
       MIN: 1,          // Minimum 1 pixel per second
@@ -253,6 +254,7 @@
       loadData: "Load Progress",
       saveToFile: "Save to File",
       loadFromFile: "Load from File",
+      checkProgress: "Check Progress",
       dataManager: "Data Manager",
       autoSaved: "✅ Progress saved automatically",
       dataLoaded: "✅ Progress loaded successfully",
@@ -326,6 +328,7 @@
       loadData: "Загрузить прогресс",
       saveToFile: "Сохранить в файл",
       loadFromFile: "Загрузить из файла",
+      checkProgress: "Проверить прогресс",
       dataManager: "Менеджер данных",
       autoSaved: "✅ Прогресс сохранён автоматически",
       dataLoaded: "✅ Прогресс успешно загружен",
@@ -399,6 +402,7 @@
       loadData: "Carregar Progresso",
       saveToFile: "Salvar em Arquivo",
       loadFromFile: "Carregar de Arquivo",
+      checkProgress: "Verificar Progresso",
       dataManager: "Dados",
       autoSaved: "✅ Progresso salvo automaticamente",
       dataLoaded: "✅ Progresso carregado com sucesso",
@@ -472,6 +476,7 @@
       loadData: "Tải tiến trình",
       saveToFile: "Lưu vào tệp",
       loadFromFile: "Tải từ tệp",
+      checkProgress: "Kiểm tra tiến độ",
       dataManager: "Dữ liệu",
       autoSaved: "✅ Đã tự động lưu tiến trình",
       dataLoaded: "✅ Đã tải tiến trình thành công",
@@ -545,6 +550,7 @@
       loadData: "Charger le progrès",
       saveToFile: "Sauvegarder dans un fichier",
       loadFromFile: "Charger depuis un fichier",
+      checkProgress: "Vérifier la progression",
       dataManager: "Données",
       autoSaved: "✅ Progrès sauvegardé automatiquement",
       dataLoaded: "✅ Progrès chargé avec succès",
@@ -618,6 +624,7 @@
       loadData: "Muat Progres",
       saveToFile: "Simpan ke File",
       loadFromFile: "Muat dari File",
+      checkProgress: "Periksa Progres",
       dataManager: "Data",
       autoSaved: "✅ Progres disimpan secara otomatis",
       dataLoaded: "✅ Progres berhasil dimuat",
@@ -689,6 +696,7 @@
       loadData: "İlerlemeyi Yükle",
       saveToFile: "Dosyaya Kaydet",
       loadFromFile: "Dosyadan Yükle",
+      checkProgress: "İlerlemeyi Kontrol Et",
       dataManager: "Veri Yöneticisi",
       autoSaved: "✅ İlerleme otomatik olarak kaydedildi",
       dataLoaded: "✅ İlerleme başarıyla yüklendi",
@@ -763,6 +771,7 @@
       loadData: "加载进度",
       saveToFile: "保存到文件",
       loadFromFile: "从文件加载",
+      checkProgress: "检查进度",
       dataManager: "数据管理",
       autoSaved: "✅ 进度已自动保存",
       dataLoaded: "✅ 进度加载成功",
@@ -839,6 +848,7 @@
       loadData: "進捗を読み込み",
       saveToFile: "ファイルへ保存",
       loadFromFile: "ファイルから読み込み",
+      checkProgress: "進捗を確認",
       dataManager: "データ管理",
       autoSaved: "✅ 自動保存しました",
       dataLoaded: "✅ 進捗を読み込みました",
@@ -915,6 +925,7 @@
       loadData: "진행 불러오기",
       saveToFile: "파일로 저장",
       loadFromFile: "파일에서 불러오기",
+      checkProgress: "진행 상황 확인",
       dataManager: "데이터",
       autoSaved: "✅ 진행 자동 저장됨",
       dataLoaded: "✅ 진행 불러오기 성공",
@@ -3975,6 +3986,12 @@
                 <span>${Utils.t("loadFromFile")}</span>
               </button>
             </div>
+            <div class="wplace-row single">
+              <button id="checkProgressBtn" class="wplace-btn wplace-btn-primary" disabled>
+                <i class="fas fa-search"></i>
+                <span>${Utils.t("checkProgress")}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -4440,6 +4457,7 @@
     const loadBtn = container.querySelector("#loadBtn")
     const saveToFileBtn = container.querySelector("#saveToFileBtn")
     const loadFromFileBtn = container.querySelector("#loadFromFileBtn")
+    const checkProgressBtn = container.querySelector("#checkProgressBtn")
     const minimizeBtn = container.querySelector("#minimizeBtn")
     const compactBtn = container.querySelector("#compactBtn")
     const statsBtn = container.querySelector("#statsBtn")
@@ -4878,6 +4896,10 @@
       })
     }
 
+    if (checkProgressBtn) {
+      checkProgressBtn.addEventListener("click", checkProgressAgainstBoard)
+    }
+
     updateUI = (messageKey, type = "default", params = {}) => {
       const message = Utils.t(messageKey, params)
       statusText.textContent = message
@@ -4949,9 +4971,54 @@
       const hasImageData = state.imageLoaded && state.imageData
       saveBtn.disabled = !hasImageData
       saveToFileBtn.disabled = !hasImageData
+      if (checkProgressBtn) {
+        checkProgressBtn.disabled = !hasImageData || !state.startPosition || !state.region
+      }
     }
 
     updateDataButtons()
+
+    async function checkProgressAgainstBoard() {
+      if (!state.imageLoaded || !state.imageData || !state.startPosition || !state.region) {
+        Utils.showAlert(Utils.t("missingRequirements"), "error")
+        return
+      }
+
+      const { width, height, pixels } = state.imageData
+      const { x: startX, y: startY } = state.startPosition
+      const tThresh = state.customTransparencyThreshold || CONFIG.TRANSPARENCY_THRESHOLD
+      const tolerance = CONFIG.PROGRESS_COLOR_TOLERANCE
+      let paintedCount = 0
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = (y * width + x) * 4
+          const r = pixels[idx]
+          const g = pixels[idx + 1]
+          const b = pixels[idx + 2]
+          const a = pixels[idx + 3]
+
+          if (a < tThresh || (!state.paintWhitePixels && Utils.isWhitePixel(r, g, b))) continue
+
+          const absX = startX + x
+          const absY = startY + y
+          const boardColor = boardState.getColor(absX, absY)
+          if (!boardColor) continue
+
+          const colorId = findClosestColor([r, g, b], state.availableColors)
+          const boardColorId = findClosestColor(boardColor, state.availableColors)
+          if (boardColorId === colorId || Utils.colorDistance(boardColor, [r, g, b]) <= tolerance) {
+            paintedCount++
+          }
+        }
+        if ((y & 15) === 0) await Promise.resolve()
+      }
+
+      state.paintedPixels = paintedCount
+      Utils.saveProgress()
+      updateStats()
+      updateUI("paintingProgress", "default", { painted: state.paintedPixels, total: state.totalPixels })
+    }
 
     function showResizeDialog(processor) {
       let baseProcessor = processor;
@@ -5413,6 +5480,7 @@
         state.startPosition = null
         state.region = null
         startBtn.disabled = true
+        updateDataButtons()
 
         Utils.showAlert(Utils.t("selectPositionAlert"), "info")
         updateUI("waitingPosition", "default")
@@ -5450,6 +5518,8 @@
                   if (state.imageLoaded) {
                     startBtn.disabled = false
                   }
+
+                  updateDataButtons()
 
                   window.fetch = originalFetch
                   state.selectingPosition = false
