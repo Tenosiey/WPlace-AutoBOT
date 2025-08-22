@@ -5647,6 +5647,16 @@
             const boardColorId = findClosestColor(boardColor, state.availableColors);
             if (boardColorId === colorId) {
               skippedPixels.alreadyPainted++;
+              state.paintedPixels++;
+
+              if (state.paintedPixels % 50 === 0) {
+                updateUI("paintingProgress", "default", {
+                  painted: state.paintedPixels,
+                  total: state.totalPixels,
+                });
+                Utils.saveProgress();
+                updateStats();
+              }
               continue;
             }
           }
