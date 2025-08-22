@@ -25,7 +25,10 @@
     menuOpen: false,
     language: 'en',
     autoRefresh: true,
-    pausedForManual: false
+    pausedForManual: false,
+    // Cached UI elements to avoid repeated DOM queries
+    statusTextEl: null,
+    statsAreaEl: null
   };
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -95,7 +98,6 @@
       if (res.status === 403) {
         console.error('❌ 403 Forbidden. CAPTCHA token might be invalid or expired.');
         capturedCaptchaToken = null;
-        stoppedForToken = true;
         return 'token_error';
       }
       const data = await res.json();
@@ -145,6 +147,7 @@
         updateUI(state.language === 'pt' ? `⌛ Sem cargas. Esperando ${Math.ceil(cooldownMs/1000)}s...` : `⌛ No charges. Waiting ${Math.ceil(cooldownMs/1000)}s...`, 'status');
         await sleep(cooldownMs);
         await getCharge();
+        await updateStats(false);
         continue;
       }
 
@@ -166,7 +169,7 @@
             while (state.charges.count < 2) {
               await sleep(60000);
               await getCharge();
-              updateStats();
+              await updateStats(false);
             }
             state.pausedForManual = false;
           }
@@ -263,7 +266,7 @@
       }
 
       await sleep(CONFIG.DELAY);
-      updateStats();
+      await updateStats(false);
     }
   };
 
@@ -279,7 +282,7 @@
     const style = document.createElement('style');
     style.textContent = `
       @keyframes pulse {
-        0% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.7); }n
+        0% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.7); }
         70% { box-shadow: 0 0 0 10px rgba(0, 255, 0, 0); }
         100% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0); }
       }
@@ -520,6 +523,9 @@
     const statusText = panel.querySelector('#statusText');
     const content = panel.querySelector('.wplace-content');
     const statsArea = panel.querySelector('#statsArea');
+    // Cache frequently accessed elements
+    state.statusTextEl = statusText;
+    state.statsAreaEl = statsArea;
     
     toggleBtn.addEventListener('click', () => {
       state.running = !state.running;
@@ -562,7 +568,7 @@
   };
 
   window.updateUI = (message, type = 'default') => {
-    const statusText = document.querySelector('#statusText');
+    const statusText = state.statusTextEl;
     if (statusText) {
       statusText.textContent = message;
       statusText.className = `wplace-status status-${type}`;
@@ -572,9 +578,9 @@
     }
   };
 
-  window.updateStats = async () => {
-    await getCharge();
-    const statsArea = document.querySelector('#statsArea');
+  window.updateStats = async (refreshCharge = true) => {
+    if (refreshCharge) await getCharge();
+    const statsArea = state.statsAreaEl;
     if (statsArea) {
       const t = {
         pt: {
@@ -599,7 +605,7 @@
       statsArea.innerHTML = `
         <div class="wplace-stat-item">
           <div class="wplace-stat-label"><i class="fas fa-user"></i> ${t.user}</div>
-          <div>${state.userInfo.name}</div>
+          <div>${state.userInfo?.name || ''}</div>
         </div>
         <div class="wplace-stat-item">
           <div class="wplace-stat-label"><i class="fas fa-paint-brush"></i> ${t.pixels}</div>
@@ -620,5 +626,5 @@
   await detectUserLocation();
   createUI();
   await getCharge();
-  updateStats();
+  await updateStats(false);
 })();
